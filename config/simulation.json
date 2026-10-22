@@ -1,0 +1,10 @@
+{
+  "drones": [
+    {"system_id": 1, "role": "leader", "origin": [0, 0, 0]},
+    {"system_id": 2, "role": "follower", "offset": [-3, -2, 0], "origin": [0, 0, 0]},
+    {"system_id": 3, "role": "follower", "offset": [-3, 2, 0], "origin": [0, 0, 0]}
+  ],
+  "frame_confirmed": true,
+  "rate_hz": 20,
+  "failsafe": "hold"
+}

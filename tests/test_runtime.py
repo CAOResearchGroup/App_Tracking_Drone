@@ -1,0 +1,136 @@
+import tempfile
+import time
+import unittest
+
+from support import ROOT, Vec3, wait_until
+from multi_drone.algorithm_runtime import AlgorithmRunner
+from multi_drone.app import App
+from multi_drone.config import Config
+from multi_drone.logger import replay
+
+
+class AlgorithmTests(unittest.TestCase):
+    def setUp(self):
+        self.runner = AlgorithmRunner()
+        self.addCleanup(self.runner.close)
+        self.context = {"leader": {"position": [1, 2, -3]}, "followers": [{"id": 2, "offset": [-3, 0, 0]}]}
+
+    def test_builtin_and_loaded_algorithm_agree(self):
+        expected = self.runner.step(self.context, .2)
+        self.runner.load(ROOT / "algorithms/python/offset_follow.py")
+        self.assertEqual(self.runner.step(self.context, .2), expected)
+
+    def test_wrong_member_ids_rejected(self):
+        self.runner.load(ROOT / "tests/fixtures/bad_algorithm.py")
+        with self.assertRaises(ValueError):
+            self.runner.step(self.context, .2)
+
+    def test_nan_output_rejected(self):
+        self.runner.load(ROOT / "tests/fixtures/nan_algorithm.py")
+        with self.assertRaises(ValueError):
+            self.runner.step(self.context, .2)
+
+    def test_hanging_algorithm_is_terminated(self):
+        self.runner.load(ROOT / "tests/fixtures/hang_algorithm.py")
+        start = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            self.runner.step(self.context, .05)
+        self.assertLess(time.monotonic()-start, 1)
+        self.assertIsNone(self.runner.process)
+        with self.assertRaises(RuntimeError):
+            self.runner.step(self.context, .05)
+
+    def test_m_file_is_not_silently_accepted(self):
+        with self.assertRaises(ValueError):
+            self.runner.load(ROOT / "README.md")
+
+
+class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.app = App(Config.default(), self.directory.name)
+        self.addCleanup(self.app.close)
+        self.app.connect("sim")
+        self.app.wait_for_vehicles(3)
+        wait_until(lambda: all(s.position is not None and s.landed is not None for s in self.app.registry.snapshot().values()))
+
+    def airborne(self):
+        with self.app.transport.lock:
+            for drone in self.app.transport.drones.values():
+                drone.armed, drone.landed = True, 2
+                drone.position = Vec3(drone.position.x, drone.position.y, -3)
+            self.app.transport.last_slow = -float("inf")
+        wait_until(lambda: all(s.armed and s.landed == 2 and s.position.z == -3 for s in self.app.registry.snapshot().values()))
+
+    def active(self):
+        self.airborne()
+        self.app.coordinator.start()
+        self.assertEqual(self.app.coordinator.phase, "priming")
+        wait_until(lambda: self.app.coordinator.phase == "active")
+
+    def test_single_vehicle_commands_and_parameter_readback(self):
+        self.assertEqual(self.app.parameter("get", 2, "MAV_SYS_ID")["value"], 2)
+        self.assertEqual(self.app.parameter("set", 2, "MPC_XY_VEL_MAX", 4)["value"], 4.)
+        self.assertEqual(self.app.command("arm", [2])["status"], "accepted")
+        wait_until(lambda: self.app.registry.snapshot()[2].armed)
+        with self.assertRaises(RuntimeError):
+            self.app.parameter("set", 2, "MPC_XY_VEL_MAX", 5)
+        self.assertEqual(self.app.command("takeoff", [2], 2)["status"], "accepted")
+        wait_until(lambda: self.app.registry.snapshot()[2].landed == 2)
+        self.assertEqual(self.app.command("disarm", [2])["status"], "failed")
+
+    def test_partial_group_command(self):
+        self.app.transport.control("reject", 3, ["on"])
+        result = self.app.command("arm", [2, 3])
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual({r["target"]: r["acknowledged"] for r in result["results"]}, {2: True, 3: False})
+
+    def test_formation_follow_then_fresh_heartbeat_stale_pose_stops_followers(self):
+        self.active()
+        self.app.transport.control("move", 1, [1., 0., -3.])
+        wait_until(lambda: self.app.registry.snapshot()[2].position.x > -2.5)
+        self.app.transport.control("freeze", 1, ["on"])
+        wait_until(lambda: self.app.coordinator.phase == "idle", 2)
+        self.assertIn("position", self.app.coordinator.reason)
+        wait_until(lambda: all(self.app.registry.snapshot()[n].mode == "HOLD" for n in (2, 3)))
+        self.assertEqual(self.app.registry.snapshot()[1].mode, "HOLD")
+        self.assertLess(time.monotonic()-self.app.registry.snapshot()[1].heartbeat_at, 1.)
+
+    def test_operator_takeover_not_overwritten(self):
+        self.active()
+        self.app.transport.control("reject", 2, ["off"])
+        with self.app.transport.lock:
+            self.app.transport.drones[2].mode = "LAND"
+            self.app.transport.last_slow = -float("inf")
+        wait_until(lambda: self.app.coordinator.phase == "idle")
+        self.assertNotEqual(self.app.transport.drones[2].mode, "HOLD")
+
+    def test_log_is_read_only_replay_and_contains_real_events(self):
+        self.app.command("arm", [2])
+        self.app.disconnect()
+        events = list(replay(self.app.logger.path))
+        self.assertTrue(any(e["kind"] == "command_ack" for e in events))
+        self.assertTrue(any(e["kind"] == "telemetry" for e in events))
+        self.assertTrue(all("utc" in e and "monotonic" in e for e in events))
+
+    def test_leader_link_loss_stops_only_followers(self):
+        self.active()
+        self.app.transport.control("drop", 1, ["on"])
+        wait_until(lambda: self.app.coordinator.phase == "idle", 2)
+        wait_until(lambda: all(self.app.registry.snapshot()[n].mode == "HOLD" for n in (2, 3)))
+        self.assertEqual(self.app.transport.drones[1].mode, "HOLD")
+
+    def test_worker_hang_stops_formation_without_stopping_receive_loop(self):
+        self.airborne()
+        self.app.runner.load(ROOT / "tests/fixtures/hang_algorithm.py")
+        self.app.coordinator.start()
+        wait_until(lambda: self.app.coordinator.phase == "idle", 4)
+        self.assertIn("deadline", self.app.coordinator.reason)
+        wait_until(lambda: self.app.registry.snapshot()[2].mode == "HOLD")
+        self.assertLess(time.monotonic()-self.app.registry.snapshot()[1].heartbeat_at, 1.)
+
+    def test_disconnect_marks_last_state_unavailable(self):
+        self.app.disconnect()
+        self.assertIsNone(self.app.registry.snapshot()[1].heartbeat_at)
+        self.assertIsNone(self.app.registry.snapshot()[1].position_at)

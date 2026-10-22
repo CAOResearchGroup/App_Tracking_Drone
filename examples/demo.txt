@@ -1,0 +1,21 @@
+# Kinematic simulation only; no MATLAB or external packages required.
+require-sim
+list
+params get 2 MPC_XY_VEL_MAX
+params set 2 MPC_XY_VEL_MAX 4
+arm all
+takeoff all 3
+wait 3
+formation setup 1 2 3
+formation start
+formation wait 5
+formation status
+sim move 1 3 0 -3
+wait 4
+list
+formation status
+formation stop
+land all
+wait 3
+list
+quit

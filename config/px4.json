@@ -1,0 +1,23 @@
+{
+  "drones": [
+    {"system_id": 1, "role": "leader", "origin": null},
+    {"system_id": 2, "role": "follower", "offset": [-3, -2, 0], "origin": null},
+    {"system_id": 3, "role": "follower", "offset": [-3, 2, 0], "origin": null}
+  ],
+  "frame_confirmed": false,
+  "source_system": 250,
+  "rate_hz": 20,
+  "heartbeat_timeout": 3,
+  "state_timeout": 0.6,
+  "health_timeout": 3,
+  "min_separation": 1,
+  "max_speed": 2,
+  "min_altitude": 0.5,
+  "max_altitude": 30,
+  "max_radius": 100,
+  "max_tracking_error": 10,
+  "min_battery": 20,
+  "battery_id": 0,
+  "algorithm_timeout": 0.03,
+  "failsafe": "hold"
+}
