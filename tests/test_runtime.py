@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from support import ROOT, Vec3, wait_until
 from multi_drone.algorithm_runtime import AlgorithmRunner
@@ -129,6 +130,16 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("deadline", self.app.coordinator.reason)
         wait_until(lambda: self.app.registry.snapshot()[2].mode == "HOLD")
         self.assertLess(time.monotonic()-self.app.registry.snapshot()[1].heartbeat_at, 1.)
+
+    def test_disk_full_does_not_prevent_failsafe_or_kill_control_threads(self):
+        self.active()
+        with patch.object(self.app.logger, "_write_line", side_effect=OSError("disk full")):
+            self.app.logger.write("force_failure")
+            wait_until(lambda: self.app.logger.last_error is not None)
+            self.app.transport.control("freeze", 1, ["on"])
+            wait_until(lambda: self.app.coordinator.phase == "idle", 2)
+            wait_until(lambda: all(self.app.registry.snapshot()[n].mode == "HOLD" for n in (2, 3)))
+            self.assertTrue(all(thread.is_alive() for thread in self.app.threads))
 
     def test_disconnect_marks_last_state_unavailable(self):
         self.app.disconnect()

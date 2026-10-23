@@ -73,7 +73,8 @@ class Shell:
                 print_json(states[int(args[0])].as_dict(time.monotonic()))
             else:
                 print_json({"endpoint": app.endpoint, "connected": app.transport is not None,
-                            "last_error": app.last_error, "formation": app.coordinator.status() if app.coordinator else None,
+                            "last_error": app.last_error, "logging": app.logger.status(),
+                            "formation": app.coordinator.status() if app.coordinator else None,
                             "vehicles": {str(n): s.as_dict(time.monotonic()) for n, s in states.items()}})
         elif command == "plot":
             operation = args[0] if len(args) == 1 else ""
@@ -175,7 +176,7 @@ class Shell:
         elif command == "config":
             print_json(app.config.as_dict())
         elif command == "log":
-            print_json({"log": str(app.logger.path.resolve())})
+            print_json({"log": str(app.logger.path.resolve()), "logging": app.logger.status()})
         elif command == "sim":
             if not isinstance(app.transport, SimTransport):
                 raise ValueError("sim commands require simulation transport")

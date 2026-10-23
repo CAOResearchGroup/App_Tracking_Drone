@@ -101,6 +101,12 @@ Khi bắt đầu bám, follower phải đang bay. Phần mềm phát setpoint gi
 
 Mất state thiết yếu hoặc thuật toán lỗi: dừng bám, yêu cầu Hold/Land/RTL theo cấu hình cho follower còn ở Offboard. Khi máy tính/router mất hoàn toàn, PX4 cần tự xử lý Offboard-loss bằng failsafe onboard.
 
+## Giới hạn log và cache parameter
+
+Log được ghi bằng luồng riêng, hàng đợi tối đa 1.024 bản ghi; khi đầy sẽ bỏ bản ghi thay vì chặn điều khiển. Mỗi phiên giữ tối đa 4 file × 8 MiB, bản ghi tối đa 64 KiB. File `.jsonl` chính chứa dữ liệu mới nhất; `.1.jsonl`, `.2.jsonl`, `.3.jsonl` chứa dữ liệu cũ dần và có thể replay riêng. Giới hạn này áp dụng từng phiên, không tự xóa log của các phiên trước. Khi lỗi ổ đĩa, phần ghi log ngừng nhưng điều khiển/failsafe tiếp tục. Lệnh `log` hoặc `status` hiển thị lỗi và số bản ghi bị bỏ; đóng phiên chờ ghi tối đa 2 giây.
+
+Parameter chỉ được lưu khi có yêu cầu get/set/list tương ứng. Cache giới hạn 4.096 parameter mỗi drone/component và 32 drone/component gần nhất. Danh sách vượt giới hạn hoặc có count/index/tên không nhất quán sẽ báo lỗi; dữ liệu từ lần đọc trước không được tính vào kết quả list mới.
+
 ## Thuật toán người dùng
 
 Đặt file trong `algorithms/python/`, khai báo hàm `step(context)` trả về target cho đúng các follower. Ví dụ: [offset_follow.py](algorithms/python/offset_follow.py).

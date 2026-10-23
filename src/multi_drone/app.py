@@ -234,6 +234,7 @@ class App:
                 for state in self.registry.vehicles.values():
                     state.heartbeat_at = state.position_at = None
         self.transport = None
+        self.logger.flush()
 
     def close(self):
         try:

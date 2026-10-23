@@ -92,6 +92,60 @@ class ParameterTests(unittest.TestCase):
         self.service.handle(self.packet(param_id="OTHER", param_count=2, param_index=1))
         self.assertEqual(set(future.result()), {"COUNT", "OTHER"})
 
+    def test_parameter_name_cannot_collide_with_list_request_key(self):
+        future = self.service.request(2, 1, "list")
+        self.service.handle(self.packet(param_id="*", param_count=2))
+        self.assertFalse(future.done())
+        self.service.handle(self.packet(param_id="OTHER", param_count=2, param_index=1))
+        self.assertEqual(set(future.result()), {"*", "OTHER"})
+
+
+    def test_unsolicited_parameter_flood_does_not_allocate_cache(self):
+        for i in range(1000):
+            self.service.handle(self.packet(param_id=f"P{i}"))
+        self.assertEqual(self.service.cache, {})
+
+    def test_requested_cache_is_bounded_across_names_and_vehicles(self):
+        self.service = ParameterService(FakeTransport(), MemoryLog(), max_parameters=2, max_vehicles=2)
+        for vehicle in range(1, 5):
+            for i in range(4):
+                name = f"P{i}"
+                future = self.service.request(vehicle, 1, "get", name)
+                self.service.handle(Packet(vehicle, 1, "PARAM_VALUE", self.packet(param_id=name).data))
+                self.assertEqual(future.result()["value"], 7)
+        self.assertEqual(len(self.service.cache), 2)
+        self.assertTrue(all(len(values) == 2 for values in self.service.cache.values()))
+
+    def test_inconsistent_list_metadata_fails_and_releases_state(self):
+        for update in ({"param_count": 65535}, {"param_index": 2},
+                       {"param_id": "OTHER"}, {"param_index": 1}, {"param_count": 1}):
+            with self.subTest(update=update):
+                future = self.service.request(2, 1, "list")
+                self.service.handle(self.packet(param_count=2))
+                self.service.handle(self.packet(**{"param_count": 2, **update}))
+                with self.assertRaises(ValueError):
+                    future.result(timeout=.1)
+                self.assertEqual(self.service.lists, {})
+
+    def test_new_list_excludes_stale_cache_and_allows_duplicates(self):
+        self.service.request(2, 1, "get", "STALE")
+        self.service.handle(self.packet(param_id="STALE"))
+        future = self.service.request(2, 1, "list")
+        self.service.handle(self.packet(param_count=2))
+        self.service.handle(self.packet(param_count=2))
+        self.assertFalse(future.done())
+        self.service.handle(self.packet(param_id="OTHER", param_count=2, param_index=1))
+        self.assertEqual(set(future.result()), {"COUNT", "OTHER"})
+        self.assertEqual(self.service.lists, {})
+
+    def test_list_timeout_cleans_up_and_late_responses_are_ignored(self):
+        future = self.service.request(2, 1, "list")
+        self.service.tick(time.monotonic()+10)
+        self.assertIsInstance(future.exception(), TimeoutError)
+        self.service.handle(self.packet())
+        self.assertEqual(self.service.lists, {})
+        self.assertEqual(self.service.cache, {})
+
 
 class SafetyTests(unittest.TestCase):
     def setUp(self):
