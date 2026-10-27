@@ -78,6 +78,7 @@ params set 2 MPC_XY_VEL_MAX 4
 arm 2,3
 takeoff followers 3
 hold followers
+position 2,3
 land 2
 rtl 3
 disarm 2
@@ -88,6 +89,10 @@ disarm 2
 Disarm cần trạng thái ON_GROUND mới. Ghi parameter chỉ khi drone disarmed/on-ground; phần mềm đọc type trước, mã hóa bytewise PX4, so giá trị phản hồi và đọc lại để xác minh. Firmware vẫn chịu trách nhiệm kiểm tra range/điều kiện của parameter. Không hỗ trợ parameter string/64-bit hoặc mọi extension protocol; danh sách thiếu gói sẽ timeout, không báo đồng bộ hoàn tất giả.
 
 Lệnh nhóm trả `accepted`, `partial` hoặc `failed` kèm kết quả riêng từng drone. Command timeout có nghĩa kết quả chưa biết; không tự gửi lặp lệnh bay. Các command cùng ID trên cùng drone được tuần tự hóa bằng cách từ chối yêu cầu đồng thời.
+
+`position TARGET` yêu cầu PX4 POSCTL (custom main mode 3, submode 0). Thành công cần ACK và heartbeat mới xác nhận POSCTL; chuyển mode không tự arm/cất cánh. PX4 vẫn kiểm tra điều kiện; app không ép mode hoặc vô hiệu hóa pre-arm checks.
+
+`messages [TARGET] [limit]` xem lịch sử thông báo (limit 1..100, mặc định 50); `messages watch TARGET [seconds]` theo dõi mới (mặc định 30 giây). Kết quả lệnh bị từ chối có `result_name`, `error`, `recent_messages` từ đúng drone trong khoảng gửi lệnh; không khẳng định mọi thông báo gần đó đều là nguyên nhân. Cửa sổ `--plots` có khung thông báo với bộ lọc drone/severity. Nguồn `STATUSTEXT` là nội dung từ PX4; `APP_COMMAND` là lỗi xử lý lệnh của app. Lịch sử tối đa 100 dòng/drone, không biểu thị lỗi còn hiệu lực. Chưa hỗ trợ Events/Arming Check Report theo metadata firmware như QGC; xem chi tiết trong [README2](../README2.md).
 
 ## 5. Vận hành leader–follower
 

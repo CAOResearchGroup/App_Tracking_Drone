@@ -114,7 +114,7 @@ class SimTransport(Transport):
                            vx=int(drone.velocity.x*100), vy=int(drone.velocity.y*100), vz=int(drone.velocity.z*100))
 
     def _heartbeat(self, drone):
-        custom = {"HOLD": (4, 3), "OFFBOARD": (6, 0), "TAKEOFF": (4, 2), "LAND": (4, 6), "RTL": (4, 5)}[drone.mode]
+        custom = {"POSCTL": (3, 0), "HOLD": (4, 3), "OFFBOARD": (6, 0), "TAKEOFF": (4, 2), "LAND": (4, 6), "RTL": (4, 5)}[drone.mode]
         self._emit(drone, "HEARTBEAT", autopilot=12, type=2, base_mode=1 | (128 if drone.armed else 0),
                    custom_mode=(custom[0] << 16) | (custom[1] << 24), system_status=4 if drone.armed else 3)
 
@@ -143,6 +143,8 @@ class SimTransport(Transport):
                             drone.mode = "OFFBOARD"
                     elif name == "hold":
                         drone.mode, drone.target = "HOLD", None
+                    elif name == "position":
+                        drone.mode, drone.target = "POSCTL", None
                     elif name in ("land", "rtl"):
                         drone.mode, drone.landed = name.upper(), 4
                         p = drone.position if name == "land" else drone.home
@@ -151,6 +153,8 @@ class SimTransport(Transport):
                         result = 3
                 elif command != 511:
                     result = 3
+            if result != 0:
+                self._emit(drone, "STATUSTEXT", severity=3, text="Simulator: command rejected", id=0, chunk_seq=0)
             self._emit(drone, "COMMAND_ACK", command=command, result=result, progress=100)
             self._heartbeat(drone)
 

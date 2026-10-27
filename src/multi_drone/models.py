@@ -82,6 +82,10 @@ class VehicleState:
     batteries: dict[int, dict] = field(default_factory=dict)
     messages: int = 0
     last_status: str | None = None
+    last_status_at: float | None = None
+    last_status_severity: int | None = None
+    status_messages: list[dict] = field(default_factory=list)
+    status_sequence: int = 0
     source_boot_ms: int | None = None
     source_times: dict[str, int] = field(default_factory=dict)
     reboot_candidates: dict[str, tuple[int, int]] = field(default_factory=dict)

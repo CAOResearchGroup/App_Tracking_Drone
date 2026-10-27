@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 from .models import FACT_NAMES, Packet, Registry, Sample, Vec3, VehicleState
+from .notifications import StatusTextAssembler, add_notification
 
 
 PX4_MODES = {1: "MANUAL", 2: "ALTCTL", 3: "POSCTL", 5: "ACRO", 6: "OFFBOARD", 7: "STABILIZED", 8: "RATTITUDE"}
@@ -33,6 +34,14 @@ def valid_number(value, sentinel=None, scale=1):
 class Telemetry:
     def __init__(self, registry: Registry, battery_id: int = 0):
         self.registry, self.battery_id = registry, battery_id
+        self.status_text = StatusTextAssembler()
+
+    def tick(self, now):
+        with self.registry.lock:
+            for (system_id, component_id), severity, text, complete in self.status_text.expire(now):
+                state = self.registry.vehicles.get(system_id)
+                if state and state.component_id == component_id:
+                    add_notification(state, severity, text, now, complete=complete)
 
     def ingest(self, packet: Packet, now: float) -> bool:
         """Accept only a discovered autopilot component, not a camera/GCS heartbeat."""
@@ -134,7 +143,8 @@ class Telemetry:
                 state.sensors = {"present": d["onboard_control_sensors_present"], "enabled": d["onboard_control_sensors_enabled"],
                                  "health": d["onboard_control_sensors_health"], "received_at": now}
             elif kind == "STATUSTEXT":
-                state.last_status = str(d.get("text", ""))
+                for severity, text, complete in self.status_text.feed(packet, now):
+                    add_notification(state, severity, text, now, complete=complete)
             return True
 
     @staticmethod

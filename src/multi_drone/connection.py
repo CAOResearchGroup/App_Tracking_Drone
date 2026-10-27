@@ -50,7 +50,11 @@ class MavlinkTransport(Transport):
         message = self.link.recv_match(blocking=True, timeout=timeout)
         if message is None or message.get_type() == "BAD_DATA":
             return None
-        return Packet(message.get_srcSystem(), message.get_srcComponent(), message.get_type(), message.to_dict(), message.get_seq())
+        data = message.to_dict()
+        if message.get_type() == "STATUSTEXT":
+            # Decode UTF-8 only after joining chunks (a character can cross chunks).
+            data["text"] = message._text_raw
+        return Packet(message.get_srcSystem(), message.get_srcComponent(), message.get_type(), data, message.get_seq())
 
     def heartbeat(self):
         with self.lock:

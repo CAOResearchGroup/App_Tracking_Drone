@@ -5,6 +5,7 @@ import json
 import queue
 import time
 import uuid
+from datetime import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
@@ -414,6 +415,11 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.span.addItems(["15 s", "30 s", "60 s", "120 s"])
         self.span.setCurrentIndex(2)
         toolbar.addWidget(self.span)
+        self.refresh_all_button = QtWidgets.QPushButton("Làm mới tất cả")
+        self.refresh_all_button.setToolTip(
+            "Bắt đầu lại tất cả ô đồ thị của mọi drone từ cùng thời điểm bấm")
+        self.refresh_all_button.clicked.connect(self.reset_all_charts)
+        toolbar.addWidget(self.refresh_all_button)
         toolbar.addAction("Gộp cùng đơn vị", self.merge_by_drone)
         toolbar.addAction("Xếp tab", self.tabify_charts)
         toolbar.addAction("Xếp dọc", self.stack_charts)
@@ -443,6 +449,38 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([350, 1090])
+        self._message_signature = None
+        self.message_dock = QtWidgets.QDockWidget("Thông báo PX4 / lỗi lệnh — lịch sử nhận", self)
+        self.message_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.message_dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        panel = QtWidgets.QWidget()
+        panel_layout = QtWidgets.QVBoxLayout(panel)
+        filters = QtWidgets.QHBoxLayout()
+        self.message_drone = QtWidgets.QComboBox()
+        self.message_drone.addItem("Tất cả drone", None)
+        self.message_level = QtWidgets.QComboBox()
+        self.message_level.addItems(["Tất cả mức", "Lỗi và cảnh báo"])
+        self.message_drone.currentIndexChanged.connect(self.update_messages)
+        self.message_level.currentIndexChanged.connect(self.update_messages)
+        filters.addWidget(self.message_drone)
+        filters.addWidget(self.message_level)
+        hint = QtWidgets.QLabel("STATUSTEXT · Lịch sử, không phải danh sách lỗi còn hiệu lực")
+        hint.setWordWrap(True)
+        filters.addWidget(hint, 1)
+        panel_layout.addLayout(filters)
+        self.message_table = QtWidgets.QTreeWidget()
+        self.message_table.setHeaderLabels(["Giờ nhận", "Drone", "Mức", "Nguồn", "Nội dung"])
+        self.message_table.setRootIsDecorated(False)
+        self.message_table.setUniformRowHeights(True)
+        self.message_table.setColumnWidth(0, 90)
+        self.message_table.setColumnWidth(1, 65)
+        self.message_table.setColumnWidth(2, 90)
+        self.message_table.setColumnWidth(3, 115)
+        panel_layout.addWidget(self.message_table)
+        self.message_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.message_dock)
+        self.resizeDocks([self.message_dock], [180], Qt.Orientation.Vertical)
+        toolbar.addAction(self.message_dock.toggleViewAction())
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.poll)
         self.timer.start(100)
@@ -496,14 +534,27 @@ class PlotWindow(QtWidgets.QMainWindow):
 
     def reset_chart(self, chart):
         """Restart only this scope's view; do not clear shared telemetry or send commands."""
-        chart.reset_at = time.monotonic()
+        self._reset_chart_view(chart, time.monotonic())
+        self.refresh_chart(chart)
+
+    def reset_all_charts(self):
+        """Restart every open scope at one timestamp, preserving layout and focus."""
+        now = time.monotonic()
+        self.history.advance(now)
+        span = int(self.span.currentText().split()[0])
+        follow = self.follow.isChecked()
+        for chart in self.charts.values():
+            self._reset_chart_view(chart, now)
+            chart.render(self.history, now, span, follow)
+
+    def _reset_chart_view(self, chart, now):
+        chart.reset_at = now
         chart.history_epoch = self.history.epoch
         chart.manual_view = False
         for plot in chart.plots.values():
             plot.enableAutoRange(axis="y", enable=True)
             plot.setXRange(0, int(self.span.currentText().split()[0]), padding=0)
         chart.live_button.setVisible(not self.follow.isChecked())
-        self.refresh_chart(chart)
 
     def move_fields(self, destination, fields):
         """Transfer requested curves, keeping every unselected curve in its original scope."""
@@ -647,6 +698,40 @@ class PlotWindow(QtWidgets.QMainWindow):
         connection = "" if self.history.frame.get("connected") else " · ĐÃ NGẮT"
         self.connection_label.setText(f"  {endpoint}{connection} · 10 Hz hiển thị")
 
+    def update_messages(self, *_):
+        vehicles = self.history.frame.get("vehicles", {})
+        known = {self.message_drone.itemData(i) for i in range(self.message_drone.count())}
+        for n in sorted(vehicles):
+            if n not in known:
+                self.message_drone.addItem(f"Drone {n}", n)
+        selected = self.message_drone.currentData()
+        warnings_only = self.message_level.currentIndex() == 1
+        messages = sorted((message for n, state in vehicles.items()
+                           if selected is None or selected == n
+                           for message in state.get("status_messages", [])
+                           if not warnings_only or message["severity"] <= 4),
+                          key=lambda m: m["received_at"])[-300:]
+        signature = (self.history.epoch, selected, warnings_only,
+                     tuple((m["system_id"], m["sequence"]) for m in messages))
+        if signature == self._message_signature:
+            return
+        self._message_signature = signature
+        scroll = self.message_table.verticalScrollBar()
+        follow = scroll.value() >= scroll.maximum()
+        previous_scroll = scroll.value()
+        self.message_table.clear()
+        for message in messages:
+            stamp = datetime.fromisoformat(message["utc"]).astimezone().strftime("%H:%M:%S")
+            row = QtWidgets.QTreeWidgetItem(self.message_table, [stamp, str(message["system_id"]),
+                message["level"], message["source"], message["text"]])
+            row.setToolTip(4, message["text"])
+            color = "#ff8089" if message["severity"] <= 3 else "#ffbe70" if message["severity"] == 4 else "#aebed1"
+            row.setForeground(2, QtGui.QBrush(QtGui.QColor(color)))
+        if follow:
+            self.message_table.scrollToBottom()
+        else:
+            scroll.setValue(previous_scroll)
+
     def poll(self):
         if self.stop.is_set():
             self.close()
@@ -658,6 +743,10 @@ class PlotWindow(QtWidgets.QMainWindow):
                     self.tree.clear()
                     self.items.clear()
                     self.drone_items.clear()
+                    self.message_drone.blockSignals(True)
+                    self.message_drone.clear()
+                    self.message_drone.addItem("Tất cả drone", None)
+                    self.message_drone.blockSignals(False)
                 self.history.update(frame)
             except queue.Empty:
                 break
@@ -665,6 +754,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.history.advance(now)
         if now-self.last_tree_update > .3:
             self.update_tree(now)
+            self.update_messages()
             self.last_tree_update = now
         if not self.pause.isChecked():
             span = int(self.span.currentText().split()[0])

@@ -10,6 +10,7 @@ from .connection import MavlinkTransport
 from .formation import Coordinator
 from .logger import EventLog
 from .models import Registry
+from .notifications import add_notification
 from .parameters import ParameterService, decode_parameter, encode_parameter
 from .plotting import PlotService
 from .safety import Safety, SafetyError
@@ -59,6 +60,7 @@ class App:
             try:
                 packet = self.transport.receive(0.01)
                 now = time.monotonic()
+                self.telemetry.tick(now)
                 if packet:
                     accepted = self.telemetry.ingest(packet, now)
                     if accepted:
@@ -145,7 +147,7 @@ class App:
         if self.coordinator.phase != "idle" and set(ids) & set(self.coordinator.follower_ids):
             self.coordinator.stop("Operator command overrides formation", skip_ids=ids)
         states, now = self.registry.snapshot(), time.monotonic()
-        futures, results = {}, []
+        futures, results, sent_at = {}, [], {}
         for n in ids:
             try:
                 state = states.get(n)
@@ -164,16 +166,29 @@ class App:
                     if not self.config.min_altitude <= altitude <= self.config.max_altitude:
                         raise ValueError("Takeoff altitude outside limits")
                     cmd, params = 22, [0., 0., 0., float("nan"), float("nan"), float("nan"), state.home_amsl+altitude]
-                elif action in ("hold", "land", "rtl"):
+                elif action in ("position", "hold", "land", "rtl"):
                     cmd, params = 176, MODE_PARAMS[action]
                 else:
-                    raise ValueError("Use arm, disarm, takeoff, hold, land, rtl")
+                    raise ValueError("Use arm, disarm, takeoff, position, hold, land, rtl")
+                sent_at[n] = time.monotonic()
                 futures[n] = self.commands.send(n, state.component_id, cmd, params, action)
             except Exception as exc:
                 results.append({"target": n, "error": str(exc), "acknowledged": False})
         for n, future in futures.items():
             try:
                 result = future.result(timeout=35)
+                if result["acknowledged"] and action == "position":
+                    deadline = time.monotonic()+3
+                    while time.monotonic() < deadline:
+                        latest = self.registry.snapshot().get(n)
+                        if (latest and latest.mode == "POSCTL" and latest.heartbeat_at is not None
+                                and latest.heartbeat_at >= sent_at[n]):
+                            result["state_confirmed"] = True
+                            break
+                        time.sleep(.01)
+                    else:
+                        result["state_confirmed"] = False
+                        result["error"] = "ACK received but POSCTL not confirmed by a new heartbeat"
                 # ACK may arrive before the next heartbeat. Do not let an immediate
                 # takeoff observe the old disarmed state after a successful arm.
                 if result["acknowledged"] and action in ("arm", "disarm"):
@@ -191,8 +206,30 @@ class App:
                 results.append(result)
             except Exception as exc:
                 results.append({"target": n, "error": str(exc), "acknowledged": False})
+        failures = [r for r in results if not r["acknowledged"] or not r.get("state_confirmed", True)]
+        if failures and sent_at:
+            # STATUSTEXT may follow the ACK; allow a short receive window off the RX thread.
+            time.sleep(.2)
+        with self.registry.lock:
+            for result in failures:
+                state = self.registry.vehicles.get(result["target"])
+                if state is None:
+                    continue
+                since = sent_at.get(result["target"], now)
+                result["recent_messages"] = [dict(m) for m in state.status_messages
+                                              if m["source"] == "STATUSTEXT" and m["received_at"] >= since][-20:]
+                add_notification(state, 3, f"{action}: {result.get('result_name', 'ERROR')} — {result.get('error', '')}",
+                                 time.monotonic(), source="APP_COMMAND")
         successful = sum(r["acknowledged"] and r.get("state_confirmed", True) for r in results)
         return {"status": "accepted" if successful == len(ids) else "partial" if successful else "failed", "results": results}
+
+    def messages(self, ids=None, limit=50):
+        if not 1 <= limit <= 100:
+            raise ValueError("Message limit must be 1..100")
+        with self.registry.lock:
+            messages = [dict(m) for n, state in self.registry.vehicles.items()
+                        if ids is None or n in ids for m in state.status_messages]
+        return sorted(messages, key=lambda m: m["received_at"])[-limit:]
 
     def parameter(self, operation, system_id, name="", value=None):
         state = self.registry.snapshot().get(system_id)

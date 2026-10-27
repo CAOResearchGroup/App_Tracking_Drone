@@ -54,6 +54,8 @@ Cột **Drone/Tham số** cố định bên trái, chỉ đổi chiều rộng b
 
 **Làm mới** xóa phần vẽ cũ của riêng ô đang chọn, đặt thời gian về 0 và chỉ vẽ mẫu nhận từ lúc bấm; không xóa log hay dữ liệu của ô khác. Bấm lại tên tham số chỉ đưa ô lên trước, không đặt lại mốc. Viền kéo hai bên/dưới rộng 12 px và hai góc dưới có tay kéo 28×28 px màu xanh để co giãn dễ hơn.
 
+**Làm mới tất cả** trên thanh công cụ áp dụng thao tác này cho toàn bộ ô đồ thị đang mở của mọi drone, kể cả các tab chưa được chọn, với cùng mốc thời gian bắt đầu. Bố cục được giữ nguyên. Nếu đang **Dừng hình**, các ô được xóa phần vẽ và sẽ vẽ dữ liệu mới khi bỏ dừng hình.
+
 Ctrl/Cmd hoặc Shift + click nhiều trường, rồi bấm **Vẽ các tham số đã chọn** hoặc double-click lựa chọn: cùng drone và cùng đơn vị sẽ gộp chung; khác đơn vị mở ô riêng. Kéo trường/ô để gộp cũng tuân theo quy tắc này. **Tách đồ thị…** cho chọn đại lượng cần tách, mỗi đại lượng đã chọn mở một ô riêng; phần còn lại giữ chung. **Gộp cùng đơn vị** gộp lại theo từng drone. Nút tách/bỏ đường chỉ hiện khi ô có nhiều đường.
 
 Cuộn chuột hoặc **Zoom +/−** để phóng/thu; kéo chuột để pan. Bật **Khoanh zoom** rồi kéo chọn vùng phóng to. Khi thao tác, ô tự giữ vùng nhìn dù dữ liệu vẫn cập nhật; **Vừa dữ liệu** căn vừa lịch sử hiện có, **Bám lại** trở về dữ liệu mới nhất. Bật lại **Bám thời gian** để tất cả ô tiếp tục bám. **Làm mới** vẫn dùng để bắt đầu lượt vẽ mới, khác với căn vừa dữ liệu.
@@ -89,7 +91,8 @@ Trước khi chạy đội hình, khai báo đúng ID, `origin` của mỗi dron
 | `connection.py` | MAVLink 2 qua UDP/TCP, định tuyến lệnh theo system/component ID; kết nối/ngắt/kết nối lại qua CLI. |
 | `telemetry.py` | Giải mã 52 trường đã chọn, state/mode/armed/health, kiểm tra timestamp, giá trị thiếu và dữ liệu cũ. |
 | `parameters.py` | List/get/set parameter, mã hóa bytewise PX4, kiểm tra phản hồi và đọc lại; chặn ghi khi armed. |
-| `commands.py` | Arm/Disarm, Takeoff, Hold, Land, RTL; ACK, timeout, kết quả từng drone và thành công một phần. |
+| `commands.py` | Arm/Disarm, Takeoff, Position, Hold, Land, RTL; ACK có tên mã, timeout, kết quả từng drone và thành công một phần. |
+| `notifications.py` | Ghép STATUSTEXT nhiều đoạn, lịch sử thông báo có severity/thời gian theo drone; xem bằng `messages` hoặc khung thông báo trong cửa sổ đồ thị. |
 | `formation.py` | Chọn leader/follower, offset NED, phát trước setpoint, xác nhận Offboard và giới hạn tốc độ thay đổi mục tiêu. |
 | `algorithm_runtime.py` | Thuật toán offset mặc định hoặc nạp `.py`; worker riêng có timeout, kiểm tra đầu ra vị trí/vận tốc. |
 | `safety.py` | Kiểm tra độ mới state, armed/in-air, estimator, pin, giới hạn mục tiêu và khoảng cách đội hình. |
@@ -129,6 +132,7 @@ Chỉ đổi thuật toán/offset khi đội hình đã dừng. Chạy code `.py
 ```
 
 - [Hướng dẫn CLI, cấu hình PX4 và giao diện thuật toán](docs/cli.md).
+- [Gửi lệnh, chuyển Position và xem thông báo lỗi PX4](README2.md).
 - [Danh sách telemetry và nguồn QGC](docs/telemetry-leader-follower.md).
 - Cấu hình mô phỏng: [simulation.json](config/simulation.json); script demo: [demo.txt](examples/demo.txt).
 

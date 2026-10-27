@@ -49,6 +49,7 @@ def snapshot_frame(app, now):
     with registry.lock:
         vehicles = {
             n: {"mode": s.mode, "armed": s.armed, "heartbeat_at": s.heartbeat_at,
+                "status_messages": [dict(message) for message in s.status_messages],
                 "facts": {name: (sample.value, sample.received_at) for name, sample in s.facts.items()}}
             for n, s in registry.vehicles.items()
         }

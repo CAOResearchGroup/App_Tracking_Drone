@@ -13,6 +13,7 @@ from support import ROOT, VehicleState, wait_until
 from multi_drone.app import App
 from multi_drone.config import Config
 from multi_drone.models import FACT_NAMES
+from multi_drone.notifications import add_notification
 from multi_drone.plot_data import PlotHistory, UNITS, snapshot_frame, validate_fields
 
 
@@ -129,6 +130,44 @@ class PlotWindowTests(unittest.TestCase):
         self.window = PlotWindow(self.frames, threading.Event())
         self.window.timer.stop()
         self.addCleanup(self.window.close)
+
+    def test_notification_panel_filters_and_updates_while_plot_is_paused(self):
+        now = time.monotonic()
+        data = frame(now)
+        first, second = VehicleState(1), VehicleState(2)
+        add_notification(first, 3, "Arming denied: no position", now)
+        add_notification(second, 6, "<b>Ready</b>", now+.01)
+        data["vehicles"][1]["status_messages"] = first.status_messages
+        data["vehicles"][2] = {**data["vehicles"][1], "status_messages": second.status_messages}
+        self.window.pause.setChecked(True)
+        self.frames.put(data)
+        self.window.poll()
+        table = self.window.message_table
+        self.assertEqual(table.topLevelItemCount(), 2)
+        self.assertEqual(table.topLevelItem(0).text(2), "ERROR")
+        self.assertEqual(table.topLevelItem(1).text(4), "<b>Ready</b>")
+        self.window.message_level.setCurrentIndex(1)
+        self.assertEqual(table.topLevelItemCount(), 1)
+        self.window.message_drone.setCurrentIndex(self.window.message_drone.findData(2))
+        self.assertEqual(table.topLevelItemCount(), 0)
+        self.window.message_level.setCurrentIndex(0)
+        self.assertEqual(table.topLevelItemCount(), 1)
+        self.assertEqual(table.topLevelItem(0).text(1), "2")
+
+    def test_reconnect_clears_old_notifications_and_filters(self):
+        now = time.monotonic()
+        data = frame(now)
+        state = VehicleState(1)
+        add_notification(state, 4, "Old warning", now)
+        data["vehicles"][1]["status_messages"] = state.status_messages
+        self.frames.put(data)
+        self.window.poll()
+        self.assertEqual(self.window.message_table.topLevelItemCount(), 1)
+        self.frames.put(frame(now+.1, epoch=2))
+        self.window.last_tree_update = 0
+        self.window.poll()
+        self.assertEqual(self.window.message_table.topLevelItemCount(), 0)
+        self.assertIsNone(self.window.message_drone.currentData())
 
     def test_drag_drop_merges_same_drone_and_removes_source(self):
         from PySide6 import QtCore, QtGui, QtWidgets

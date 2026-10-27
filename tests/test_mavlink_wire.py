@@ -47,3 +47,18 @@ class WireTests(unittest.TestCase):
         self.assertEqual((message.x, message.y, message.z), (4., -2., -3.))
         self.assertEqual(message.type_mask & 7, 0)
         self.assertEqual(message.type_mask & 56, 56)
+        # Position uses PX4 custom main mode 3, submode 0, targeted to drone 2.
+        from multi_drone.commands import MODE_PARAMS
+        transport.command(2, 1, 176, MODE_PARAMS["position"])
+        data, _ = peer.recvfrom(4096)
+        command = parser.parse_char(data)
+        self.assertEqual((command.target_system, command.target_component, command.command), (2, 1, 176))
+        self.assertEqual((command.param1, command.param2, command.param3), (1., 3., 0.))
+        # Preserve raw UTF-8 bytes across a split inside a multi-byte character.
+        raw = ("A"*49+"ế error").encode("utf-8")
+        sender.statustext_send(3, raw[:50], 7, 0)
+        telemetry.ingest(transport.receive(1), 11.)
+        self.assertEqual(registry.snapshot()[2].status_messages, [])
+        sender.statustext_send(3, raw[50:], 7, 1)
+        telemetry.ingest(transport.receive(1), 11.1)
+        self.assertEqual(registry.snapshot()[2].status_messages[0]["text"], raw.decode())

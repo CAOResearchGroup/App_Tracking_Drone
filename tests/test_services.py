@@ -46,6 +46,12 @@ class CommandTests(unittest.TestCase):
         self.ack(result=2)
         self.assertFalse(future.result()["acknowledged"])
 
+    def test_temporary_rejection_has_readable_reason(self):
+        future = self.service.send(2, 1, 400, [1.], "arm")
+        self.ack(result=1)
+        self.assertEqual(future.result()["result_name"], "TEMPORARILY_REJECTED")
+        self.assertIn("tạm thời", future.result()["error"])
+
 
 class ParameterTests(unittest.TestCase):
     def setUp(self):

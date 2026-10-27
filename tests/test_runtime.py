@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from support import ROOT, Vec3, wait_until
+from support import ROOT, Vec3, wait_until, Packet
 from multi_drone.algorithm_runtime import AlgorithmRunner
 from multi_drone.app import App
 from multi_drone.config import Config
@@ -80,6 +80,51 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.app.command("takeoff", [2], 2)["status"], "accepted")
         wait_until(lambda: self.app.registry.snapshot()[2].landed == 2)
         self.assertEqual(self.app.command("disarm", [2])["status"], "failed")
+
+    def test_position_mode_group_is_confirmed_without_arming(self):
+        result = self.app.command("position", [2, 3])
+        self.assertEqual(result["status"], "accepted")
+        self.assertTrue(all(r["state_confirmed"] for r in result["results"]))
+        states = self.app.registry.snapshot()
+        self.assertEqual(states[2].mode, "POSCTL")
+        self.assertEqual(states[3].mode, "POSCTL")
+        self.assertFalse(states[2].armed)
+        self.assertEqual(states[1].mode, "HOLD")
+
+    def test_position_denial_has_recent_px4_text_without_other_drone_or_old_errors(self):
+        self.app.telemetry.ingest(Packet(2, 1, "STATUSTEXT", {"severity": 3, "text": "old error"}), time.monotonic()-10)
+        self.app.telemetry.ingest(Packet(1, 1, "STATUSTEXT", {"severity": 3, "text": "other drone"}), time.monotonic())
+        self.app.transport.control("reject", 2, ["on"])
+        result = self.app.command("position", [2, 3])
+        self.assertEqual(result["status"], "partial")
+        failure = next(r for r in result["results"] if r["target"] == 2)
+        self.assertEqual(failure["result_name"], "DENIED")
+        self.assertEqual([m["text"] for m in failure["recent_messages"]], ["Simulator: command rejected"])
+        self.assertEqual(self.app.messages([2])[-1]["source"], "APP_COMMAND")
+        self.assertEqual(self.app.registry.snapshot()[2].last_status, "Simulator: command rejected")
+
+    def test_position_ack_without_new_mode_heartbeat_is_not_confirmed(self):
+        original = self.app.transport.command
+
+        def ack_only(system_id, component_id, command, params):
+            if command == 176:
+                self.app.transport.incoming.put(Packet(system_id, 1, "COMMAND_ACK", {"command": 176, "result": 0}))
+            else:
+                original(system_id, component_id, command, params)
+
+        with patch.object(self.app.transport, "command", side_effect=ack_only):
+            result = self.app.command("position", [2])
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["results"][0]["acknowledged"])
+        self.assertFalse(result["results"][0]["state_confirmed"])
+
+    def test_position_override_stops_formation_and_keeps_selected_mode(self):
+        self.active()
+        result = self.app.command("position", [2])
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(self.app.coordinator.phase, "idle")
+        self.assertEqual(self.app.registry.snapshot()[2].mode, "POSCTL")
+        wait_until(lambda: self.app.registry.snapshot()[3].mode == "HOLD")
 
     def test_partial_group_command(self):
         self.app.transport.control("reject", 3, ["on"])

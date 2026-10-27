@@ -8,6 +8,17 @@ from support import ROOT
 
 
 class CliTests(unittest.TestCase):
+    def test_position_and_message_history_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, str(ROOT / "run_cli.py"), "--sim", "--log-dir", directory,
+                "--execute", "position 2,3", "--execute", "messages 3 10", "--execute", "status 3"],
+                cwd=ROOT, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            outputs = [json.loads(line) for line in result.stdout.splitlines()]
+            self.assertTrue(all(r["state_confirmed"] for r in outputs[1]["results"]))
+            self.assertEqual(outputs[2], {"messages": []})
+            self.assertEqual(outputs[3]["mode"], "POSCTL")
+
     def test_group_arm_immediately_followed_by_takeoff(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, str(ROOT / "run_cli.py"), "--sim", "--log-dir", directory,

@@ -7,7 +7,15 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 
 
-MODE_PARAMS = {"hold": [1., 4., 3.], "offboard": [1., 6., 0.], "land": [1., 4., 6.], "rtl": [1., 4., 5.]}
+MODE_PARAMS = {"position": [1., 3., 0.], "hold": [1., 4., 3.], "offboard": [1., 6., 0.], "land": [1., 4., 6.], "rtl": [1., 4., 5.]}
+RESULT_NAMES = {0: "ACCEPTED", 1: "TEMPORARILY_REJECTED", 2: "DENIED", 3: "UNSUPPORTED",
+                4: "FAILED", 5: "IN_PROGRESS", 6: "CANCELLED", 7: "COMMAND_LONG_ONLY",
+                8: "COMMAND_INT_ONLY", 9: "COMMAND_UNSUPPORTED_MAV_FRAME"}
+RESULT_DETAILS = {
+    1: "PX4 tạm thời từ chối: lệnh hợp lệ nhưng chưa thể thực hiện lúc này.",
+    2: "PX4 từ chối lệnh.", 3: "PX4 không hỗ trợ lệnh này.",
+    4: "PX4 thực hiện lệnh không thành công.", 6: "Lệnh đã bị hủy.",
+}
 
 
 @dataclass
@@ -63,8 +71,12 @@ class CommandService:
                 item.deadline = min(item.progress_deadline, time.monotonic()+3)
                 return
             self.pending.pop(key)
-            item.future.set_result({"target": packet.system_id, "action": item.action, "result": d["result"],
-                                    "acknowledged": d["result"] == 0, "correlation_id": item.correlation_id})
+            result = {"target": packet.system_id, "action": item.action, "result": d["result"],
+                      "result_name": RESULT_NAMES.get(d["result"], f"UNKNOWN_{d['result']}"),
+                      "acknowledged": d["result"] == 0, "correlation_id": item.correlation_id}
+            if d["result"] != 0:
+                result["error"] = RESULT_DETAILS.get(d["result"], "PX4 không chấp nhận lệnh; xem result_name.")
+            item.future.set_result(result)
 
     def tick(self, now):
         with self.lock:

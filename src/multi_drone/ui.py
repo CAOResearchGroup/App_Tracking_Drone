@@ -20,10 +20,12 @@ HELP = """Commands (NED: x=North, y=East, z=Down; distances m):
   list                              Danh sách drone, mode, vị trí, tuổi dữ liệu
   status [ID]                       Trạng thái và đủ 52 trường (thiếu = null)
   watch [seconds]                   In trạng thái mỗi giây; Ctrl-C để dừng xem
+  messages [TARGET] [limit]          Lịch sử thông báo PX4/lỗi lệnh (tối đa 100)
+  messages watch TARGET [seconds]    Theo dõi thông báo mới, mặc định 30 giây
   plot open|close|status            Đồ thị realtime, kéo thả/gộp theo từng drone
   arm|disarm TARGET                 TARGET = ID, 1,2,3, all, leader, followers
   takeoff TARGET [height_m]         Cất cánh theo độ cao so với home
-  hold|land|rtl TARGET              Lệnh một drone hoặc nhóm, kết quả từng drone
+  position|hold|land|rtl TARGET     Chuyển mode; position = PX4 POSCTL
   params list ID [filter]           Đọc toàn bộ parameter, lọc theo tên
   params get ID NAME                Đọc một parameter
   params set ID NAME VALUE          Ghi và đọc lại; chỉ khi disarmed/on-ground
@@ -87,6 +89,31 @@ class Shell:
                 print_json(app.plots.status())
             else:
                 raise ValueError("Usage: plot open|close|status")
+        elif command == "messages":
+            if args and args[0] == "watch":
+                if not 2 <= len(args) <= 3:
+                    raise ValueError("Usage: messages watch TARGET [seconds]")
+                ids = app.targets(args[1])
+                duration = float(args[2]) if len(args) == 3 else 30.
+                if not math.isfinite(duration) or not 0 < duration <= 3600:
+                    raise ValueError("Watch duration must be 0..3600 seconds")
+                started = time.monotonic()
+                seen = {}
+                try:
+                    while time.monotonic()-started < duration:
+                        for message in app.messages(ids, 100):
+                            n, seq = message["system_id"], message["sequence"]
+                            if message["received_at"] >= started and seq > seen.get(n, 0):
+                                print_json({"notification": message})
+                                seen[n] = seq
+                        time.sleep(.1)
+                except KeyboardInterrupt:
+                    pass
+            else:
+                if len(args) > 2:
+                    raise ValueError("Usage: messages [TARGET] [limit]")
+                ids = app.targets(args[0]) if args else None
+                print_json({"messages": app.messages(ids, int(args[1]) if len(args) == 2 else 50)})
         elif command == "watch":
             duration = float(args[0]) if args else 10.
             if not math.isfinite(duration) or duration < 0:
@@ -98,7 +125,7 @@ class Shell:
                     time.sleep(min(1, max(0, deadline-time.monotonic())))
             except KeyboardInterrupt:
                 pass
-        elif command in ("arm", "disarm", "takeoff", "hold", "land", "rtl"):
+        elif command in ("arm", "disarm", "takeoff", "position", "hold", "land", "rtl"):
             if not args:
                 raise ValueError(f"Usage: {command} TARGET" + (" [height_m]" if command == "takeoff" else ""))
             result = app.command(command, app.targets(args[0]), float(args[1]) if len(args) > 1 else 3.)
